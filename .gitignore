@@ -1,0 +1,16 @@
+# Python
+.venv/
+__pycache__/
+
+# Caches and intermediate files
+work/
+
+# Local tool binaries (vgmstream)
+bin/
+
+# Extracted game data and generated output
+extracted/
+*_out/
+models_test/
+audio_wem/
+audio_plan.csv
