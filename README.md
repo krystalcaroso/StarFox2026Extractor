@@ -3,6 +3,7 @@
 Tools for extracting the contents of the game's asset pack (`romfs/data.zip`) and converting them into usable formats:
 
 * **Models:** glTF 2.0 (`.glb`) with skeletons, skinning, morph targets, materials and textures.
+* **Animations:** glTF 2.0 (`.glb`), one per animation, each with the model it animates.
 * **Textures:** PNG (Radiance `.hdr` for float formats).
 * **Soundtrack:** tagged FLAC with playlists.
 * **Voice lines:** tagged FLAC in 13 languages, named by speaker and line, with subtitle text.
@@ -23,7 +24,7 @@ All scripts live in `tools/`. Run them from this folder (the one containing `too
 * **For the soundtrack only:**
   * **[vgmstream](https://vgmstream.org)**: `vgmstream-cli` decodes the game's Wwise audio (Opus, Vorbis, PTADPCM). Prebuilt command-line releases for Windows, macOS and Linux are linked from <https://vgmstream.org> and published at <https://github.com/vgmstream/vgmstream/releases>. It can also be built from source: <https://github.com/vgmstream/vgmstream>. The examples below assume the binary is at `bin/vgmstream/vgmstream-cli`.
   * **[FFmpeg](https://ffmpeg.org)**: used for FLAC encoding. Install it with your package manager (for example `brew install ffmpeg` or `apt install ffmpeg`). It must be on `PATH`, or pass its location with `--ffmpeg`.
-* **Disk space:** roughly 46 GB for the extracted files, 22 GB for textures, 2 GB for models and 7 GB for audio.
+* **Disk space:** roughly 46 GB for the extracted files, 22 GB for textures, 2 GB for models, 33 GB for animations and 7 GB for audio.
 
 ## 1. Extract the asset pack
 
@@ -35,7 +36,7 @@ This decompresses every asset and names it from the recovered name table (`tools
 
 Every later step reads from `extracted/`.
 
-## 2. Models and textures
+## 2. Models, textures and animations
 
 ### 2.1 Build the GUID index
 
@@ -95,6 +96,32 @@ Optional checking tools:
 * `tools/preview_tex.py model.glb out.png`: a quick point-sampled preview.
 
 They need extra packages: `.venv/bin/pip install pygltflib matplotlib`.
+
+### 2.4 Export animations
+
+```
+.venv/bin/python -I tools/anim_export.py extracted models_out anims_out
+```
+
+This exports 6,499 skeletal animations to `anims_out/<path>.glb`. Run it after 2.3: each file is a copy of the matching model from `models_out/` (mesh, skeleton, materials and textures) with the animation added, so it plays directly in a viewer.
+
+* The game doesn't record which model an animation belongs to, so each is matched by bone names. Many models share a skeleton (for example `fox`, `fox_comms` and `fox_cinematics`), so ties go to the model whose name best fits the animation's path, e.g. radio-comms animations to `fox_comms`. The match and how many of the animation's bones the model has are listed in `anims_out/_index.csv`.
+* Bones are sampled at the animation's frame rate (30 or 60 fps). Facial blendshape animation is included as morph target weights.
+* Every clip is moved so the character starts at the origin. Many cinematic clips are authored in scene space, hundreds of units away. The skeleton's root is shifted horizontally so the character's hips start at the origin, and vertically so its feet start where they are in the model's rest pose; the motion within the clip is unchanged. The shift is stored as `animation_recentered_by` in the scene's extras, so the original placement can be restored.
+* 70 animation files are skipped and listed in `_index.csv`: 54 facial poses that contain no motion, and 16 reference animations from the 3DS game (`3ds_reference/`) that have no matching model.
+* The files reference the textures in `textures_out/` by relative path, so keep `anims_out/`, `models_out/` and `textures_out/` side by side.
+* View them in Blender (File → Import → glTF 2.0) using Material Preview shading. macOS Preview/Quick Look draws stray pieces of fur away from the body on some animated characters (e.g. Fox); this is a bug in Preview's renderer, as the same files play correctly in Blender.
+
+Options:
+
+| Option | Effect |
+|---|---|
+| `--filter SUBSTR` | Only export paths containing `SUBSTR` |
+| `--dry-run` | Only match animations to models, write `_index.csv` and estimate the output size |
+| `--fps N` | Sample at `N` frames per second instead of each animation's own rate |
+| `--min-coverage F` | Skip animations whose best model has less than this fraction of their bones (default 0.5) |
+| `-j N` | Number of parallel processes |
+| `--force` | Overwrite existing output |
 
 ## 3. Soundtrack
 

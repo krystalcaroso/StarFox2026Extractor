@@ -30,7 +30,7 @@ def tex(i):
 
 prims = []
 allP = []
-for p in g.meshes[0].primitives:
+for p in [p for m in g.meshes for p in m.primitives]:
     P = acc(p.attributes.POSITION).astype(np.float64)
     allP.append(P); prims.append(p)
 allP = np.concatenate(allP)

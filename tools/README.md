@@ -157,6 +157,22 @@ Files with no recovered name go to `extracted/_unnamed/<key>.<guessed ext>`.
   * `preview_tex.py`: fast point-sampled preview.
 * Models are Z-up. The glTF root node rotates −90° about X. Units are as stored (Fox is about 17.4 units tall).
 
+## Animations (`anim_export.py extracted models_out anims_out`)
+* Sources: `*.anim.fbx.import` (5,881) and `*.anim.gr2.import` (688, mostly facial "navi" poses) hold one `_vanim_animation_t` each. Its `data` buffer is a 64-bit `granny_file_info` with unrelocated pointers, the same as model skeletons. `*.timeline.fbx.import` (cinematic object and camera paths) is a different type and isn't exported.
+* `granny_anim.py` reads it: `file_info.Animations` (array at +0x78) → animation {name, duration, time step, oversampling, track groups} → track group {vector tracks, transform tracks (60 bytes: name, flags, orientation / position / scale-shear curves)}.
+* Curves are variants {type definition*, object*}. The type definitions are embedded (44-byte member entries: type, name, reference type, array width), so curve objects are read by member name. All 18 formats occur:
+  * Constants and identity: `DaIdentity`, `DaConstant32f`, `D3Constant32f`, `D4Constant32f`.
+  * Float keys: `DaK32fC32f`, `DaKeyframes32f`, `D3I1K32fC32f`.
+  * Quantised: `DaK16uC16u`/`DaK8uC8u` (per-component scale/offset), `D3K16uC16u`/`D3K8uC8u`, `D3I1K16uC16u`/`D3I1K8uC8u` (one value along a direction), `D9I1*`/`D9I3*` (uniform or per-axis scale). Knots are `k / OneOverKnotScale`; `OneOverKnotScaleTrunc` holds the top 16 bits of the float.
+  * Quaternions `D4nK16uC15u`/`D4nK8uC7u`: smallest-three encoding. Each 3-word control holds the 3 smallest components plus 2 bits saying which component was dropped and a sign bit for it. `ScaleOffsetTableEntries` selects one of 16 scale/offset pairs per component (tables as in Norbyte's LSLib).
+* Curves are B-splines (degree 2 in practice) with one knot per control. The full knot vector is `[K0] + K + [K(n-1)] × degree`, which makes the valid range exactly [K(degree-1), K(n-1)] = [~0, duration]. Constant tracks reproduce the model's bind pose exactly.
+* Frame rate = 1 / (time step × oversampling): 30 fps for most, 60 for some.
+* Blendshape animation: `blendshape_tracks` maps morph target names to Granny vector tracks (1-D curves, weights 0–1). They are written as glTF morph weights on every mesh with those target names.
+* Matching to models: by bone names, then tie-breaks (see `anim_export.py`). Cinematic clips also contain the scene's group nodes above the skeleton (`VEHICLES > Vipers_Grp > viper12 > root`); tracks that are pure identity are ignored for matching. Tracks the model has no bone for are not exported. Across all exported clips: 6,392 lose nothing; 102 lose a fixed offset on a group node (e.g. a fish's place in its school), so the model plays at its own origin; 5 lose real motion (the Spyborg arm nodes in `l_arm_spyborg_head`, `r_arm_spyborg_head` and `r_arm_spyborg_out`, and eyelid bones missing from the matched model in `mission_01_granga_shot_02_fox_cin` and `mission_01_granga_defeat_shot_02c_falco_cin`). Copies of the model glb get the animation added; texture URIs are re-relativised. Scale/shear keeps only the scale diagonal, since glTF has no shear.
+* Every joint of the skin gets rotation, translation and scale channels. Bones that never leave the bind pose get a two-key constant, so no joint falls back to its node default in viewers that treat unanimated joints differently.
+* Recentering: horizontal offset = frame-0 position of the lowest common ancestor of all skinned joints (the pelvis for characters, the root for props); vertical offset = how far the lowest skinned joint sits above or below its bind-pose height at frame 0. The offset is removed from the top-level node's translation channel (`T -= R·S·offset`, in that node's parent space) and written to scene extras as `animation_recentered_by`.
+* macOS Preview converts glb to USD through Apple's copy of Adobe's USD-Fileformat-Plugins. `usdcat file.glb -o out.usda` reproduces that conversion, and the resulting UsdSkel data evaluates correctly; the stray fur Preview shows on Fox comes from its renderer. Splitting the meshes by vertex count, by joint count, or into one skeleton per mesh didn't remove the strays.
+
 ## Textures (`texture_export.py extracted textures_out`)
 * Handles every `*.png|tga|jpg|hdr.import` (`_vrender_texture_t`): 8,780 textures, all 2D with one layer.
 * Output: `textures_out/<path>.png`, or `.hdr` (Radiance) for float formats.
