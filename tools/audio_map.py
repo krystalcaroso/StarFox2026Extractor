@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Map Wwise events -> media sources, extract bank-embedded .wem, write a conversion plan.
 
+Voice lines are matched to their dialogue entry in data/eclipse/locs/*.locs_strings (entry id = event name),
+which gives the speaker and the subtitle text in the line's language; they are named "<Speaker> - <ID>.flac".
+
 usage: python -I tools/audio_map.py <extracted_dir> <wem_stage_dir> <plan.csv>
 """
-import csv, glob, os, pickle, re, struct, sys
+import csv, glob, json, os, pickle, re, struct, sys
 from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wwise import Bank, fnv1_32
@@ -38,6 +41,34 @@ for c in cands:
     for p in ('', 'play_', 'stop_'):
         h = fnv1_32(p + c)
         if h in objs: names.setdefault(h, (p + c).lower())
+
+# ---- dialogue (speaker + subtitles) -------------------------------------
+# Wwise language folder -> locs (language, country); None = the default text (US English)
+LOC_LANG = {'english(us)': None, 'japanese(jp)': ('ja', 'jp'), 'german(de)': ('de', 'de'),
+            'french(fr)': ('fr', 'fr'), 'french(ca)': ('fr', 'ca'), 'spanish(es)': ('es', 'es'),
+            'spanish(419)': ('es', '419'), 'italian(it)': ('it', 'it'), 'portuguese(br)': ('pt', 'br'),
+            'dutch(nl)': ('nl', 'nl'), 'korean(kr)': ('ko', 'kr'), 'chinese(cn)': ('zh', 'cn'),
+            'chinese(tw)': ('zh', 'tw')}
+lines = {}                     # lower-case id -> (id, speaker, {(language, country) or None: text})
+for f in sorted(glob.glob(os.path.join(ext, 'data/eclipse/locs/*.locs_strings'))):
+    for o in json.load(open(f, encoding='utf-8'))['segments'][0]['exported_objects']:
+        if 'translations' not in o or 'id' not in o: continue
+        attrs = {x.get('name'): x.get('string_value') for x in o.get('attributes') or []}
+        tr = {}
+        for t in o['translations']:
+            l = t.get('language')
+            key = (l['language'].removeprefix('k_language_'), l['country'].removeprefix('k_country_')) if l else None
+            tr[key] = t.get('text', '').replace('\r\n', '\n').strip()
+        lines.setdefault(o['id'].lower(), (o['id'], attrs.get('vo.speaker') or '', tr))
+
+def line_for(evs, lang):
+    """(id, speaker, text) of the first event with a dialogue entry, else None."""
+    for e in evs:
+        e = e.removeprefix('play_')
+        if e in lines:
+            lid, speaker, tr = lines[e]
+            return lid, speaker, tr.get(LOC_LANG.get(lang)) or tr.get(None, '')
+    return None
 
 # ---- graph walk ---------------------------------------------------------
 LOCAL = {}
@@ -77,7 +108,7 @@ def sources_of(oid, seen, broad):
 
 def walk(broad):
     global LOCAL
-    ev, bk = defaultdict(set), defaultdict(set)
+    ev, bk, evbk = defaultdict(set), defaultdict(set), defaultdict(set)
     for bname, evs in bank_events.items():
         LOCAL = bank_objs[bname]
         for e in evs:
@@ -88,11 +119,12 @@ def walk(broad):
                 for s in sources_of(tgt, set(), broad):
                     ev[s].add(names.get(e, 'event_%u' % e))
                     bk[s].add(bname)
-    return ev, bk
+                    evbk[s].add((names.get(e, 'event_%u' % e), bname))
+    return ev, bk, evbk
 
-src_events, src_banks = walk(False)
+src_events, src_banks, src_evbank = walk(False)
 src_link = {s: 'direct' for s in src_events}
-ev2, bk2 = walk(True)
+ev2, bk2, _ = walk(True)
 for s in ev2:
     if s not in src_events:
         src_events[s], src_banks[s], src_link[s] = ev2[s], bk2[s], 'transition'
@@ -133,9 +165,19 @@ for sid, lang, f in loose + emb_items:
     else:
         top = os.path.basename(banks[0]) if banks else '_unreferenced'
     label = evs[0].removeprefix('play_') if evs else 'unref'
-    out = os.path.join(top, '%s__%u.flac' % (safe(label), sid))
+    # a source can be shared between languages but play for different events in each language's bank
+    # (e.g. the English recording of ME910A is also ME910 in every language), so match on this bank's events
+    own = sorted(e for e, b in src_evbank.get(sid, ()) if lang and os.path.dirname(b) == lang) or evs
+    line = line_for(own, lang) if top.split(os.sep)[0] == 'vo' else None
+    if line:
+        lid, speaker, text = line
+        name = '%s - %s.flac' % (safe(speaker), safe(lid)) if speaker else '%s.flac' % safe(lid)
+    else:
+        lid = speaker = text = ''
+        name = '%s__%u.flac' % (safe(label), sid)
+    out = os.path.join(top, name)
     rows.append([sid, lang, 'embedded' if f.startswith(stage) else 'streamed', f, out,
-                 ';'.join(evs), ';'.join(banks), src_link.get(sid, 'none')])
+                 ';'.join(evs), ';'.join(banks), src_link.get(sid, 'none'), lid, speaker, text])
 
 # disambiguate duplicate output paths (same id present loose + embedded)
 seen = {}
@@ -144,9 +186,9 @@ for r in rows:
     if k in seen:
         seen[k] += 1; r[4] = k[:-5] + '_dup%d.flac' % seen[k]
     else: seen[k] = 0
-with open(plan_path, 'w', newline='') as fh:
+with open(plan_path, 'w', newline='', encoding='utf-8') as fh:
     w = csv.writer(fh)
-    w.writerow(['source_id', 'lang', 'kind', 'wem', 'flac', 'events', 'banks', 'link'])
+    w.writerow(['source_id', 'lang', 'kind', 'wem', 'flac', 'events', 'banks', 'link', 'line_id', 'speaker', 'text'])
     w.writerows(sorted(rows, key=lambda r: r[4]))
 print('objects', len(objs), 'events', sum(map(len, bank_events.values())), 'named', len(names))
-print('media rows', len(rows), 'with events', sum(1 for r in rows if r[5]))
+print('media rows', len(rows), 'with events', sum(1 for r in rows if r[5]), 'voice lines with text', sum(1 for r in rows if r[8]))

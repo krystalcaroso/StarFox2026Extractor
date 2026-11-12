@@ -24,7 +24,7 @@ wproj = open(os.path.join(ext, 'data/eclipse/audio/eclipse/eclipse.wproj.import'
 names = {fnv1_32(c): c for c in {m.group().decode().lower() for m in re.finditer(rb'[A-Za-z0-9_]{3,}', wproj)}}
 
 flac_of = {}
-for r in csv.DictReader(open(plan_path)):
+for r in csv.DictReader(open(plan_path, encoding='utf-8')):
     if not r['lang']: flac_of[int(r['source_id'])] = r['flac']
 
 RS_TYPE = {0: 'sequence', 1: 'sequence-step', 2: 'random', 3: 'random-step'}
@@ -223,7 +223,7 @@ for m in glob.glob(os.path.join(pl, '**/*.m3u'), recursive=True):
     for l in open(m):
         l = l.strip()
         if l and not l.startswith('#'): placed.add(os.path.normpath(os.path.join(os.path.dirname(m), l)))
-plan_rows = [r for r in csv.DictReader(open(plan_path)) if r['flac'].startswith('music/') and not r['lang']]
+plan_rows = [r for r in csv.DictReader(open(plan_path, encoding='utf-8')) if r['flac'].startswith('music/') and not r['lang']]
 info = {r['flac']: r for r in plan_rows}
 left = [r['flac'] for r in plan_rows if os.path.normpath(os.path.join(out_dir, r['flac'])) not in placed]
 

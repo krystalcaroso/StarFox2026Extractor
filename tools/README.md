@@ -41,10 +41,12 @@ Files with no recovered name go to `extracted/_unnamed/<key>.<guessed ext>`.
 * `audio_map.py extracted audio_wem/embedded audio_plan.csv`: extracts the embedded `.wem` files and walks event → Play action → containers/tracks → sources.
   * Event names are recovered by FNV-1/32 hashing identifiers taken from `eclipse.wproj.import`, with optional `play_`/`stop_` prefixes. This names all 4,357 events.
   * Add extra name candidates in `tools/wwise_names.txt`, separated by whitespace.
+  * Voice lines: `data/eclipse/locs/*.locs_strings` (JSON) holds one entry per line, whose `id` is the voice event name (`A6010` = `a6010`). It gives the speaker (`vo.speaker` attribute) and the text per language (`k_language_xx` / `k_country_yy`; the entry without a language is US English). When a source plays from several events, the first one with an entry in that language's own bank is used. Sources can be shared between languages while playing for different events in each: the English recording of `ME910A` is also stored in every other language, where it plays only for `ME910`, which has no text. 1,697 of 1,766 voice events have one; the rest are grunts, shouts and some multiplayer lines.
 * `audio_convert.py audio_plan.csv audio_out --vgmstream bin/vgmstream/vgmstream-cli`: converts with vgmstream, then ffmpeg FLAC (level 8).
-  * Tags: title (event), album (bank), WWISE_SOURCE_ID / WWISE_EVENTS / WWISE_BANKS, language, and LOOPSTART/LOOPLENGTH for looping sounds.
+  * Tags: title (event, or line ID for voice lines), album (bank), WWISE_SOURCE_ID / WWISE_EVENTS / WWISE_BANKS, language, LOOPSTART/LOOPLENGTH for looping sounds, and ARTIST (speaker) / LYRICS (subtitle text) for voice lines.
+  * `--retag` rewrites the tags of existing files by stream copy, without decoding again.
   * The output contains the full sample with loop points ignored (`-i`).
-  * Layout: `audio_out/<bank>/<event>__<id>.flac`, `audio_out/vo/<lang>/<line>__<id>.flac`, `audio_out/_unreferenced/`.
+  * Layout: `audio_out/<bank>/<event>__<id>.flac`, `audio_out/vo/<lang>/<Speaker> - <LINE_ID>.flac` (plus `_lines.csv`), `audio_out/_unreferenced/`. Voice lines without a dialogue entry stay `<event>__<id>.flac`.
 * Codecs: Wwise Opus (0x3041), Wwise Vorbis (0xFFFF), PTADPCM (0x8311). All need vgmstream.
 * Bank copies of streamed sounds are only prefetch heads, so `audio_map.py` drops them (5,252) and keeps the full streamed file.
 * Music tracks (HIRC type 11, v154): `u32 numSources` at offset 0, followed by 14-byte source entries.
